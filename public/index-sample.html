@@ -1,0 +1,20 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+  <meta charset="UTF-8">
+  <title>A-Frame 2台共有動作テスト</title>
+  <script src="https://aframe.io/releases/1.8.0/aframe.min.js"></script>
+  <script src="/socket.io/socket.io.js"></script>
+  <script src="multiplayer.js"></script>
+  <script src="station-grab.js"></script>
+</head>
+<body>
+  <a-scene background="color: #bde4fa">
+    <a-camera position="0 1.6 0" look-controls wasd-controls></a-camera>
+    <a-plane rotation="-90 0 0" width="50" height="50" color="#98bba4"></a-plane>
+    <a-box id="station" station-grab position="0 0.6 -5" width="2" height="1.2" depth="1.5" color="#d5b48a"></a-box>
+    <a-text value="2 second hold to move" color="#223344" position="-1.6 2.3 -5" width="4"></a-text>
+    <a-sky color="#bde4fa"></a-sky>
+  </a-scene>
+</body>
+</html>

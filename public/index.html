@@ -1,0 +1,1222 @@
+<!doctype html>
+<html lang="ja">
+  <head>
+    <meta charset="UTF-8" />
+    <meta
+      name="viewport"
+      content="width=device-width,initial-scale=1"
+    />
+    <title>都市レイアウト実験</title>
+    <script src="https://aframe.io/releases/1.8.0/aframe.min.js"></script>
+
+
+    <!-- 1. 画面上の説明・ボタンのデザイン -->
+    <style>
+      body {
+        margin: 0;
+        font-family: system-ui, sans-serif;
+        color: #263b36;
+      }
+      aside {
+        position: fixed;
+        z-index: 5;
+        top: 24px;
+        left: 24px;
+        pointer-events: none;
+      }
+      h1 {
+        font-size: 24px;
+        margin: 4px 0;
+        font-weight: 600;
+        letter-spacing: 0.04em;
+      }
+      .eyebrow {
+        font-size: 11px;
+        letter-spacing: 0.2em;
+      }
+      aside p {
+        font-size: 12px;
+        line-height: 1.8;
+        margin: 8px 0;
+      }
+      .panel {
+        background: #f6f7efeb;
+        padding: 18px 22px;
+        border: 1px solid #ffffff9c;
+        border-radius: 4px;
+        box-shadow: 0 5px 30px #142b2220;
+      }
+      nav {
+        position: fixed;
+        bottom: 28px;
+        left: 24px;
+        z-index: 5;
+        display: flex;
+        gap: 6px;
+        flex-wrap: wrap;
+        max-width: 80vw;
+      }
+      button {
+        background: #f6f7efed;
+        color: #263b36;
+        border: 1px solid #c7cec5;
+        border-radius: 3px;
+        padding: 11px 16px;
+        cursor: pointer;
+        font: inherit;
+        font-size: 12px;
+      }
+      button:hover {
+        background: #dbe7d5;
+      }
+      #status {
+        position: fixed;
+        inset: 0;
+        z-index: 9;
+        display: grid;
+        place-items: center;
+        background: #e5ebe2;
+        font-size: 15px;
+      }
+      #status[hidden] {
+        display: none;
+      }
+      .legend {
+        display: flex;
+        gap: 12px;
+        font-size: 11px;
+        margin-top: 14px;
+      }
+      .dot {
+        display: inline-block;
+        width: 7px;
+        height: 7px;
+        border-radius: 50%;
+        margin-right: 5px;
+      }
+      .hint {
+        position: fixed;
+        right: 24px;
+        top: 24px;
+        font-size: 11px;
+        z-index: 5;
+        background: #f6f7efdc;
+        padding: 12px 16px;
+        line-height: 1.9;
+      }
+      body.vr aside,
+      body.vr nav,
+      body.vr .hint {
+        display: none;
+      }
+      @media (max-width: 600px) {
+        aside {
+          top: 12px;
+          left: 12px;
+        }
+        .hint {
+          display: none;
+        }
+        h1 {
+          font-size: 20px;
+        }
+        .panel {
+          padding: 14px;
+        }
+        nav {
+          left: 12px;
+          bottom: 18px;
+        }
+      }
+    </style>
+    <script>
+      // 外部の画像・モデル不要。質感はCanvasで生成します。
+
+      // 2. 土地・川・鉄道・住宅などの3D空間を生成
+      AFRAME.registerComponent("landscape", {
+        init: function () {
+          const T = AFRAME.THREE,
+            root = new T.Group();
+          this.el.setObject3D("mesh", root);
+
+          // 同じ配置を再現するための乱数
+          let seed = 3741;
+          const rand = () => {
+            seed = (seed * 1664525 + 1013904223) >>> 0;
+            return seed / 4294967296;
+          };
+
+          // 2-1. 草・砂利・屋根・壁・道路・水面の質感
+          const texture = (kind) => {
+            const c = document.createElement("canvas");
+            c.width = c.height = 512;
+            const g = c.getContext("2d");
+            const base = {
+              grass: [132, 145, 96],
+              gravel: [137, 133, 120],
+              roof: [91, 91, 83],
+              wall: [218, 207, 182],
+              asphalt: [92, 97, 96],
+              water: [125, 145, 255],
+            }[kind];
+            const im = g.createImageData(512, 512);
+            for (let y = 0; y < 512; y++)
+              for (let x = 0; x < 512; x++) {
+                const i = (y * 512 + x) * 4;
+                let n = (rand() - 0.5) * (kind === "grass" ? 45 : 35);
+                if (kind === "grass") n += 8 * Math.sin(x / 35) * Math.sin(y / 43);
+                for (let k = 0; k < 3; k++) im.data[i + k] = base[k] + n;
+                im.data[i + 3] = 255;
+              }
+            g.putImageData(im, 0, 0);
+            if (kind === "roof") {
+              g.strokeStyle = "#383b3b80";
+              g.lineWidth = 2;
+              for (let i = 0; i < 512; i += 32) {
+                g.beginPath();
+                g.moveTo(0, i);
+                g.lineTo(512, i);
+                g.stroke();
+                for (let j = 0; j < 512; j += 64) g.strokeRect(j + (i % 64), i, 64, 32);
+              }
+            }
+            if (kind === "wall") {
+              g.strokeStyle = "#b4ada044";
+              for (let y = 0; y < 512; y += 24) {
+                g.beginPath();
+                g.moveTo(0, y);
+                g.lineTo(512, y);
+                g.stroke();
+              }
+            }
+            if (kind === "water") {
+              for (let y = 0; y < 512; y++) {
+                const val = 128 + 25 * Math.sin(y * 0.12);
+                g.fillStyle = `rgb(${val},${128 + 15 * Math.cos(y * 0.1)},250)`;
+                g.fillRect(0, y, 512, 1);
+              }
+            }
+            const t = new T.CanvasTexture(c);
+            t.wrapS = t.wrapT = T.RepeatWrapping;
+            t.anisotropy = 4;
+            if (kind !== "water") t.colorSpace = T.SRGBColorSpace;
+            return t;
+          };
+
+          // 2-2. テクスチャの繰り返しと素材の設定
+          const grassTex = texture("grass");
+          grassTex.repeat.set(14, 14);
+          const gravelTex = texture("gravel");
+          gravelTex.repeat.set(2, 12);
+          const wallTex = texture("wall"),
+            roofTex = texture("roof"),
+            roadTex = texture("asphalt");
+          roadTex.repeat.set(2, 8);
+          const mat = (color, roughness = 0.9, extra = {}) =>
+            new T.MeshStandardMaterial({ color, roughness, ...extra });
+          const grass = mat("#ffffff", 1, { map: grassTex, vertexColors: true }),
+            stone = mat("#aaa896", 1, { map: gravelTex }),
+            concrete = mat("#c3c0ae"),
+            road = mat("#ffffff", 0.96, { map: roadTex });
+          const metal = mat("#747b7c", 0.35, { metalness: 0.65 }),
+            wood = mat("#65584b"),
+            leaf = [mat("#536c37"), mat("#667d43"), mat("#77904f")];
+
+          // 2-3. 形状を配置する共通関数
+          function mesh(geo, m, x = 0, y = 0, z = 0, parent = root) {
+            const o = new T.Mesh(geo, m);
+            o.position.set(x, y, z);
+            o.castShadow = true;
+            o.receiveShadow = true;
+            parent.add(o);
+            return o;
+          }
+          function box(x, y, z, w, h, d, m, parent = root) {
+            return mesh(new T.BoxGeometry(w, h, d), m, x, y, z, parent);
+          }
+
+          // 2-4. 川の曲がり方と地面の高さ
+          const center = (z) => -4 + 1.3 * Math.sin(z * 0.16) + 0.45 * Math.sin(z * 0.4);
+          function height(x, z) {
+            const d = Math.abs(x - center(z));
+            const h = 0.68 - 0.93 * Math.exp(-Math.pow(d / 1.8, 4));
+            const hill = 3.2 * Math.exp(-((x + 11) ** 2 / 19 + (z + 10) ** 2 / 22));
+            return h + hill;
+          }
+          // 32m四方の土地。川の部分は実際に低く掘り込みます。
+          const geo = new T.PlaneGeometry(32, 32, 160, 160);
+          geo.rotateX(-Math.PI / 2);
+          const p = geo.attributes.position,
+            col = [];
+          for (let i = 0; i < p.count; i++) {
+            const x = p.getX(i),
+              z = p.getZ(i),
+              d = Math.abs(x - center(z));
+            p.setY(i, height(x, z));
+            const c = new T.Color(d < 2.45 ? "#b5af8c" : "#ffffff");
+            col.push(c.r, c.g, c.b);
+          }
+          geo.setAttribute("color", new T.Float32BufferAttribute(col, 3));
+          geo.computeVertexNormals();
+          mesh(geo, grass);
+          box(0, -0.5, 0, 32, 1, 32, mat("#8f8470"));
+          // 周囲は明るい展示床。模型の輪郭がわかるようにします。
+          box(0, -1.09, 0, 250, 0.15, 250, mat("#dce0d6"));
+          // 都市の外側にオブジェクト置き場を作成
+          box(38, -1.045, 0, 40, 0.10, 40, mat("#90969A"));
+          // 川面：蛇行に沿う帯状のメッシュ。
+          const wp = [],
+            uv = [],
+            ix = [];
+          for (let i = 0; i <= 192; i++) {
+            const z = -16 + i / 6;
+            for (const side of [-1, 1]) {
+              wp.push(center(z) + side * 1.69, 0.21, z);
+              uv.push(side === -1 ? 0 : 1, i / 24);
+            }
+            if (i < 192) {
+              const a = i * 2;
+              ix.push(a, a + 2, a + 1, a + 1, a + 2, a + 3);
+            }
+          }
+          const wg = new T.BufferGeometry();
+          wg.setAttribute("position", new T.Float32BufferAttribute(wp, 3));
+          wg.setAttribute("uv", new T.Float32BufferAttribute(uv, 2));
+          wg.setIndex(ix);
+          wg.computeVertexNormals();
+          this.waterNormal = texture("water");
+          this.waterNormal.repeat.set(3, 5);
+          const wm = mat("#488c94", 0.23, {
+            metalness: 0.25,
+            normalMap: this.waterNormal,
+            normalScale: new T.Vector2(0.2, 0.2),
+            side: T.DoubleSide,
+          });
+          const water = mesh(wg, wm);
+          water.castShadow = false;
+          // 川岸の小石。空き地の建設領域には散らしません。
+          const rockMat = mat("#9b998a");
+          for (let i = 0; i < 130; i++) {
+            const z = -15.7 + rand() * 31.4;
+            const x = center(z) + (rand() > 0.5 ? 1 : -1) * (1.8 + rand() * 0.65);
+            const r = 0.04 + rand() * 0.11;
+            const rock = mesh(
+              new T.IcosahedronGeometry(r, 1),
+              rockMat,
+              x,
+              height(x, z) + r * 0.3,
+              z,
+            );
+            rock.scale.set(1.5, 0.6, 1);
+            rock.rotation.y = rand() * 6;
+          }
+          // 複線鉄道：バラスト、枕木、レール、架線柱。
+          // 複線鉄道：都市の右端へ移動
+
+// 線路の土台
+box(12, 0.76, 0, 2.4, 0.18, 32, stone);
+
+// 枕木
+for (let z = -15.8; z < 16; z += 0.48) {
+  for (const x of [11.4, 12.6]) {
+    box(x, 0.88, z, 1.02, 0.09, 0.13, wood);
+  }
+}
+
+// レール
+for (const x of [11.08, 11.72, 12.28, 12.92]) {
+  box(x, 0.97, 0, 0.055, 0.12, 32, metal);
+  box(x, 1.035, 0, 0.085, 0.025, 32, metal);
+}
+
+// 架線柱
+for (let z = -14; z <= 14; z += 7) {
+  box(10.5, 2.35, z, 0.09, 3.3, 0.09, metal);
+  box(12, 3.92, z, 3.1, 0.07, 0.07, metal);
+}
+
+// 架線
+for (const x of [11.4, 12.6]) {
+  box(x, 3.8, 0, 0.018, 0.018, 32, metal);
+}
+          // 小規模な既存住宅地。計画エリアの大部分は未開発のままです。
+          box(-10.4, 0.74, 9.2, 8.6, 0.12, 6.4, concrete);
+          box(-10.4, 0.815, 9.2, 8.6, 0.035, 1.15, road);
+          const glass = mat("#44616b", 0.2, { metalness: 0.25 }),
+            trim = mat("#e3dfd0"),
+            door = mat("#71604d");
+
+          // 住宅1棟の作成：壁・屋根・窓・玄関・煙突
+          function house(x, z, color, angle) {
+            const group = new T.Group();
+            group.position.set(x, 0.82, z);
+            group.rotation.y = angle;
+            root.add(group);
+            const walls = mat(color, 0.94, { map: wallTex });
+            box(0, 0.65, 0, 1.65, 1.3, 1.5, walls, group);
+            box(0, 0.07, 0, 1.8, 0.14, 1.65, concrete, group);
+            const roofMat = mat("#ffffff", 0.88, { map: roofTex });
+            for (const side of [-1, 1]) {
+              const r = box(side * 0.46, 1.55, 0, 1.11, 0.08, 1.85, roofMat, group);
+              r.rotation.z = -side * 0.48;
+            }
+            const triangle = new T.Shape();
+            triangle.moveTo(-0.825, 0);
+            triangle.lineTo(0.825, 0);
+            triangle.lineTo(0, 0.43);
+            triangle.closePath();
+            for (const zz of [-0.75, 0.75]) {
+              const t = mesh(
+                new T.ShapeGeometry(triangle),
+                new T.MeshStandardMaterial({ color, roughness: 1, side: T.DoubleSide }),
+                0,
+                1.3,
+                zz,
+                group,
+              );
+            }
+            box(0.48, 0.4, 0.765, 0.33, 0.8, 0.055, door, group);
+            for (const xx of [-0.48, 0.42]) {
+              box(xx, 0.95, 0.77, 0.45, 0.4, 0.06, trim, group);
+              box(xx, 0.95, 0.809, 0.35, 0.3, 0.018, glass, group);
+              box(xx, 0.95, 0.823, 0.025, 0.3, 0.02, trim, group);
+            }
+            for (const side of [-1, 1]) {
+              box(side * 0.836, 0.85, 0, 0.035, 0.43, 0.6, trim, group);
+              box(side * 0.86, 0.85, 0, 0.015, 0.34, 0.5, glass, group);
+            }
+            box(0.48, 0.02, 1.03, 0.5, 0.04, 0.5, concrete, group);
+            box(-0.48, 1.91, -0.35, 0.18, 0.45, 0.23, mat("#9a8471"), group);
+          }
+          ["#e3dac5", "#c8c8b8", "#d8b99a", "#e2dfd3", "#c6bda8", "#d3cdbd"].forEach(
+            (c, i) =>
+              house(-13.1 + (i % 3) * 2.65, i < 3 ? 7.2 : 11.2, c, i < 3 ? 0 : Math.PI),
+          );
+          // 住宅地の街灯。
+          const lamp = mat("#fff0c6", 0.5, {
+            emissive: "#ffe5ac",
+            emissiveIntensity: 0.3,
+          });
+          for (const x of [-14.3, -9, -6.4]) {
+            box(x, 1.6, 8.5, 0.045, 1.7, 0.045, metal);
+            box(x, 2.45, 8.5, 0.24, 0.08, 0.16, lamp);
+          }
+          // 丘と外周の樹木。樹冠は複数の球で自然なシルエットに。
+          function tree(x, z, s = 1) {
+            const y = height(x, z);
+            mesh(
+              new T.CylinderGeometry(0.055 * s, 0.1 * s, 1.15 * s, 7),
+              wood,
+              x,
+              y + 0.575 * s,
+              z,
+            );
+            for (let k = 0; k < 3; k++) {
+              const o = mesh(
+                new T.IcosahedronGeometry(0.5 * s, 2),
+                leaf[k],
+                x + (k - 1) * 0.22 * s,
+                y + (1.05 + k * 0.18) * s,
+                z + (k % 2) * 0.14 * s,
+              );
+              o.scale.set(1, 1.3, 1);
+            }
+          }
+          for (let i = 0; i < 45; i++) {
+            const x = -14.8 + rand() * 7,
+              z = -14.8 + rand() * 10;
+            if (Math.abs(x - center(z)) > 3) tree(x, z, 0.7 + rand() * 0.6);
+          }
+          for (let i = 0; i < 18; i++) {
+            const z = -14 + rand() * 28;
+            tree(14 + rand(), z, 0.75 + rand() * 0.45);
+          }
+          // 低い木杭で敷地端を示す（全面の道路や区画は作らない）。
+          for (let x = -15; x <= 15; x += 3) {
+            box(x, 0.87, 15.8, 0.055, 0.4, 0.055, wood);
+            box(x, 0.87, -15.8, 0.055, 0.4, 0.055, wood);
+          }
+          // 明るい空のグラデーション。
+          const skyCanvas = document.createElement("canvas");
+          skyCanvas.width = 16;
+          skyCanvas.height = 256;
+          const ctx = skyCanvas.getContext("2d"),
+            gradient = ctx.createLinearGradient(0, 0, 0, 256);
+          gradient.addColorStop(0, "#7da7c5");
+          gradient.addColorStop(0.55, "#dce5df");
+          gradient.addColorStop(1, "#e9e9d9");
+          ctx.fillStyle = gradient;
+          ctx.fillRect(0, 0, 16, 256);
+          const st = new T.CanvasTexture(skyCanvas);
+          st.colorSpace = T.SRGBColorSpace;
+          const sky = mesh(
+            new T.SphereGeometry(180, 24, 16),
+            new T.MeshBasicMaterial({ map: st, side: T.BackSide }),
+            0,
+            0,
+            0,
+          );
+          sky.castShadow = sky.receiveShadow = false;
+
+          // 太陽光・影・空と地面からの環境光
+          const sun = new T.DirectionalLight("#fff0d6", 2.4);
+          sun.position.set(-18, 30, 15);
+          sun.castShadow = true;
+          sun.shadow.mapSize.set(2048, 2048);
+          Object.assign(sun.shadow.camera, {
+            left: -27,
+            right: 27,
+            top: 27,
+            bottom: -27,
+            near: 1,
+            far: 90,
+          });
+          sun.shadow.bias = -0.0003;
+          sun.shadow.normalBias = 0.025;
+          root.add(sun);
+          root.add(new T.HemisphereLight("#c8e0ee", "#7c8662", 2));
+          this.el.sceneEl.addEventListener("renderstart", () => {
+            document.getElementById("status").hidden = true;
+          });
+        },
+        tick: function (time) {
+          if (this.waterNormal) this.waterNormal.offset.y = time * 0.000012;
+        },
+        remove: function () {
+          const root = this.el.getObject3D("mesh");
+          if (root) {
+            root.traverse((o) => {
+              if (o.geometry) o.geometry.dispose();
+            });
+            this.el.removeObject3D("mesh");
+          }
+        },
+      });
+      // Q/Eで上下移動。視点切り替えはPC用です。
+
+      // 3. キーボードによる視点の上下移動
+      AFRAME.registerComponent("vertical-move", {
+        init: function () {
+          this.keys = {};
+          this.down = (e) => {
+            this.keys[e.code] = true;
+          };
+          this.up = (e) => {
+            this.keys[e.code] = false;
+          };
+          this.blur = () => {
+            this.keys = {};
+          };
+          window.addEventListener("keydown", this.down);
+          window.addEventListener("keyup", this.up);
+          window.addEventListener("blur", this.blur);
+        },
+        tick: function (t, dt) {
+          if (this.el.sceneEl.is("vr-mode")) return;
+          const p = this.el.object3D.position;
+          p.y = Math.max(
+            1.8,
+            Math.min(
+              50,
+              p.y +
+                ((this.keys.KeyE ? 1 : 0) - (this.keys.KeyQ ? 1 : 0)) *
+                  Math.min(dt, 50) *
+                  0.008,
+            ),
+          );
+        },
+        remove: function () {
+          window.removeEventListener("keydown", this.down);
+          window.removeEventListener("keyup", this.up);
+          window.removeEventListener("blur", this.blur);
+        },
+      });
+    </script>
+  </head>
+  <body>
+
+    <!-- 4. 読み込み表示・説明・視点切り替えボタン -->
+    <div id="status">土地を読み込んでいます…</div>
+    <aside class="panel">
+      <div class="eyebrow">URBAN PLANNING / 01</div>
+      <h1>タスクシーン</h1>
+    
+    </aside>
+    <div class="hint">
+      ドラッグ：見回す　WASD：移動<br />Q：下降　E：上昇<br />建物・道路の配置操作は次の段階です
+    </div>
+    <nav>
+      <button data-view="overview">全体を見る</button
+      ><button data-view="river">川岸を見る</button
+      ><button data-view="rail">駅の候補地を見る</button
+      ><button data-view="houses">住宅地を見る</button>
+      <button id="resetAllBtn">全オブジェクトを初期位置に戻す</button>
+
+    </nav>
+
+    <!-- 5. A-Frameのシーンとカメラ -->
+    <a-scene
+      horizon-glow
+      renderer="antialias: true; colorManagement: true"
+      shadow="type: pcfsoft"
+      background="color: #dce5df"
+      fog="type: linear; color: #dce5df; near: 65; far: 140"
+      loading-screen="enabled: false"
+    >
+      <a-entity landscape></a-entity>
+      <a-entity
+        id="rig"
+        position="0 0 0"
+        ><a-camera
+          id="camera"
+          position="25 24 32"
+          rotation="-31 38 0"
+          near="0.05"
+          far="250"
+          wasd-controls="acceleration: 25"
+          vertical-move
+        ></a-camera
+      ></a-entity>
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+  
+
+<!-- 他の参加者のアバター -->
+<a-entity id="remotePlayers"></a-entity>
+
+      
+
+  <!-- =====================================
+    コンクリート橋
+===================================== -->
+
+<a-entity
+  id="bridge"
+  station-grab
+  position="28 -0.25 4"
+  rotation="0 0 0">
+
+  <!-- コンクリート橋桁 -->
+  <a-box
+    position="0 0.05 0"
+    width="6.2"
+    height="0.2"
+    depth="1.5"
+    color="#AEB5B7"
+    shadow>
+  </a-box>
+
+  <!-- グレーの道路面 -->
+<a-box
+  position="0 0.16 0"
+  width="6.15"
+  height="0.025"
+  depth="1.15"
+  color="#555555">
+</a-box>
+
+  <!-- 橋の側面 -->
+  <a-box
+    position="0 -0.07 -1.1"
+    width="6.2"
+    height="0.24"
+    depth="0.16"
+    color="#879194">
+  </a-box>
+
+  <a-box
+    position="0 -0.07 1.1"
+    width="6.2"
+    height="0.24"
+    depth="0.16"
+    color="#879194">
+  </a-box>
+
+  <!-- 左側の細い手すり -->
+  <a-box
+    position="0 0.72 -1.12"
+    width="6.2"
+    height="0.065"
+    depth="0.075"
+    color="#566367">
+  </a-box>
+
+  <!-- 右側の細い手すり -->
+  <a-box
+    position="0 0.72 1.12"
+    width="6.2"
+    height="0.065"
+    depth="0.075"
+    color="#566367">
+  </a-box>
+
+  <!-- 左側の支柱 -->
+  <a-box position="-2.7 0.44 -1.12"
+    width="0.08" height="0.55" depth="0.08"
+    color="#647174">
+  </a-box>
+
+  <a-box position="-0.9 0.44 -1.12"
+    width="0.08" height="0.55" depth="0.08"
+    color="#647174">
+  </a-box>
+
+  <a-box position="0.9 0.44 -1.12"
+    width="0.08" height="0.55" depth="0.08"
+    color="#647174">
+  </a-box>
+
+  <a-box position="2.7 0.44 -1.12"
+    width="0.08" height="0.55" depth="0.08"
+    color="#647174">
+  </a-box>
+
+  <!-- 右側の支柱 -->
+  <a-box position="-2.7 0.44 1.12"
+    width="0.08" height="0.55" depth="0.08"
+    color="#647174">
+  </a-box>
+
+  <a-box position="-0.9 0.44 1.12"
+    width="0.08" height="0.55" depth="0.08"
+    color="#647174">
+  </a-box>
+
+  <a-box position="0.9 0.44 1.12"
+    width="0.08" height="0.55" depth="0.08"
+    color="#647174">
+  </a-box>
+
+  <a-box position="2.7 0.44 1.12"
+    width="0.08" height="0.55" depth="0.08"
+    color="#647174">
+  </a-box>
+
+</a-entity>
+
+  <!-- ===================================
+     モダンな駅（フラット屋根）
+=================================== -->
+
+<a-entity
+  id="station"
+  station-grab
+  position="28 -1.01 -10">
+
+  <!-- 駅舎の土台 -->
+  <a-box
+    position="0 0.12 0"
+    width="2.6"
+    height="0.24"
+    depth="4.2"
+    color="#49545B">
+  </a-box>
+
+  <!-- 駅舎の床 -->
+  <a-box
+    position="0 0.25 0"
+    width="2.5"
+    height="0.04"
+    depth="4.1"
+    color="#DFE5E8">
+  </a-box>
+
+  <!-- 左側のガラス壁 -->
+  <a-box
+    position="-1.2 1.05 0"
+    width="0.05"
+    height="1.6"
+    depth="4"
+    material="color:#83B9CD;transparent:true;opacity:0.5">
+  </a-box>
+
+  <!-- 右側のガラス壁 -->
+  <a-box
+    position="1.2 1.05 0"
+    width="0.05"
+    height="1.6"
+    depth="4"
+    material="color:#83B9CD;transparent:true;opacity:0.5">
+  </a-box>
+
+  <!-- 正面ガラス -->
+  <a-box
+    position="0 1.05 2"
+    width="2.4"
+    height="1.6"
+    depth="0.05"
+    material="color:#83B9CD;transparent:true;opacity:0.5">
+  </a-box>
+
+  <!-- 背面ガラス -->
+  <a-box
+    position="0 1.05 -2"
+    width="2.4"
+    height="1.6"
+    depth="0.05"
+    material="color:#83B9CD;transparent:true;opacity:0.5">
+  </a-box>
+
+  <!-- 黒い柱 -->
+  <a-box
+    position="-1.2 1.05 -2"
+    width="0.12"
+    height="1.7"
+    depth="0.12"
+    color="#26323A">
+  </a-box>
+
+  <a-box
+    position="1.2 1.05 -2"
+    width="0.12"
+    height="1.7"
+    depth="0.12"
+    color="#26323A">
+  </a-box>
+
+  <a-box
+    position="-1.2 1.05 2"
+    width="0.12"
+    height="1.7"
+    depth="0.12"
+    color="#26323A">
+  </a-box>
+
+  <a-box
+    position="1.2 1.05 2"
+    width="0.12"
+    height="1.7"
+    depth="0.12"
+    color="#26323A">
+  </a-box>
+
+  <!-- ============================
+       駅舎のフラット屋根
+  ============================ -->
+
+  <a-box
+    position="0 1.95 0"
+    width="2.9"
+    height="0.14"
+    depth="4.5"
+    color="#26323A"
+    shadow>
+  </a-box>
+
+  <!-- 屋根の白い縁 -->
+  <a-box
+    position="0 2.04 0"
+    width="3"
+    height="0.05"
+    depth="4.6"
+    color="#E5EAED">
+  </a-box>
+
+  <!-- 入口の自動ドア -->
+  <a-box
+    position="-1.25 0.82 0"
+    width="0.05"
+    height="1.25"
+    depth="1.3"
+    material="color:#397D93;transparent:true;opacity:0.65">
+  </a-box>
+
+  <!-- ドアの中央フレーム -->
+  <a-box
+    position="-1.29 0.82 0"
+    width="0.06"
+    height="1.25"
+    depth="0.05"
+    color="#E6EDF0">
+  </a-box>
+
+  <!-- 駅名看板 -->
+  <a-box
+    position="0 1.65 2.06"
+    width="2.1"
+    height="0.36"
+    depth="0.07"
+    color="#23313A">
+  </a-box>
+
+  <!-- 駅名 -->
+  <a-text
+    value="RIVERSIDE"
+    position="0 1.65 2.11"
+    align="center"
+    width="1.9"
+    color="#FFFFFF">
+  </a-text>
+
+  <!-- ============================
+       ホーム
+  ============================ -->
+
+  <!-- ホーム本体 -->
+  <a-box
+    position="2 0.18 0"
+    width="1.2"
+    height="0.36"
+    depth="8"
+    color="#BFC5C8"
+    shadow>
+  </a-box>
+
+  <!-- 黄色い安全ライン -->
+  <a-box
+    position="2.48 0.365 0"
+    width="0.08"
+    height="0.01"
+    depth="7.8"
+    color="#E8C85B">
+  </a-box>
+
+  <!-- ホームの柱1 -->
+  <a-box
+    position="1.65 1.25 -3"
+    width="0.1"
+    height="1.9"
+    depth="0.1"
+    color="#34434C">
+  </a-box>
+
+  <!-- ホームの柱2 -->
+  <a-box
+    position="1.65 1.25 3"
+    width="0.1"
+    height="1.9"
+    depth="0.1"
+    color="#34434C">
+  </a-box>
+
+  <!-- ホームのフラット屋根 -->
+  <a-box
+    position="2 2.25 0"
+    width="1.6"
+    height="0.12"
+    depth="8.2"
+    color="#28343D"
+    shadow>
+  </a-box>
+
+  <!-- ホーム屋根の白いライン -->
+  <a-box
+    position="2 2.33 0"
+    width="1.65"
+    height="0.04"
+    depth="8.25"
+    color="#DDE6EA">
+  </a-box>
+
+</a-entity>
+<!-- ==========================
+     病院オブジェクト
+========================== -->
+
+<a-entity
+  id="hospital"
+  station-grab
+  position="28 0.68 13"
+  scale="0.6 0.6 0.6">
+
+  <!-- 病院本体 -->
+  <a-box
+    position="0 1.6 0"
+    width="5.2"
+    height="3.2"
+    depth="4.5"
+    color="#E5E9EA"
+    shadow>
+  </a-box>
+
+  <!-- 屋根 -->
+  <a-box
+    position="0 3.25 0"
+    width="5.5"
+    height="0.15"
+    depth="4.8"
+    color="#86989E">
+  </a-box>
+
+  <!-- 正面入口 -->
+  <a-box
+    position="0 1 2.3"
+    width="1.4"
+    height="2"
+    depth="0.08"
+    color="#527A89">
+  </a-box>
+
+  <!-- 左右の窓 -->
+  <a-box
+    position="-1.7 1.5 2.3"
+    width="1.1"
+    height="1.3"
+    depth="0.06"
+    color="#729AA9">
+  </a-box>
+
+  <a-box
+    position="1.7 1.5 2.3"
+    width="1.1"
+    height="1.3"
+    depth="0.06"
+    color="#729AA9">
+  </a-box>
+
+  <!-- 赤十字マーク -->
+  <a-box
+    position="0 2.7 2.31"
+    width="0.15"
+    height="0.65"
+    depth="0.06"
+    color="#D94B4B">
+  </a-box>
+
+  <a-box
+    position="0 2.7 2.32"
+    width="0.65"
+    height="0.15"
+    depth="0.06"
+    color="#D94B4B">
+  </a-box>
+
+</a-entity>
+
+
+<!-- ==========================
+     スーパーマーケット
+========================== -->
+
+<a-entity
+  id="supermarket"
+  station-grab
+  position="28 0.68 -2"
+  scale="0.6 0.6 0.6">
+
+  <!-- 建物本体 -->
+  <a-box
+    position="0 1.35 0"
+    width="5.6"
+    height="2.7"
+    depth="4.6"
+    color="#E8E3D8"
+    shadow>
+  </a-box>
+
+  <!-- 平らな屋根 -->
+  <a-box
+    position="0 2.75 0"
+    width="5.9"
+    height="0.15"
+    depth="4.9"
+    color="#66736F">
+  </a-box>
+
+  <!-- 緑色の店舗看板 -->
+  <a-box
+    position="0 2.35 2.34"
+    width="5.6"
+    height="0.55"
+    depth="0.1"
+    color="#36836A">
+  </a-box>
+
+  <!-- 店舗名 -->
+  <a-text
+    value="SUPERMARKET"
+    position="0 2.35 2.41"
+    align="center"
+    width="4.5"
+    color="#FFFFFF">
+  </a-text>
+
+  <!-- ガラス入口 -->
+  <a-box
+    position="0 0.95 2.35"
+    width="1.4"
+    height="1.8"
+    depth="0.07"
+    color="#6B9DAB">
+  </a-box>
+
+  <!-- 左側ショーウィンドウ -->
+  <a-box
+    position="-1.8 1.05 2.35"
+    width="1.4"
+    height="1.5"
+    depth="0.06"
+    color="#85AFB6">
+  </a-box>
+
+  <!-- 右側ショーウィンドウ -->
+  <a-box
+    position="1.8 1.05 2.35"
+    width="1.4"
+    height="1.5"
+    depth="0.06"
+    color="#85AFB6">
+  </a-box>
+
+</a-entity>
+    </a-scene>
+    <script>
+
+      // 6. ボタンで切り替えるカメラ位置と向き
+      const camera = document.getElementById("camera"),
+        scene = document.querySelector("a-scene");
+      const views = {
+        player: [
+        [4, 2.28, 6],
+        [-5, -15],
+        ],
+        overview: [
+          [25, 24, 32],
+          [-31, 38],
+        ],
+        river: [
+          [0, 4.5, 13],
+          [-12, 18],
+        ],
+        rail: [
+          [6, 5, 14],
+          [-12, -12],
+        ],
+        houses: [
+          [-7, 4.5, 15],
+          [-16, 35],
+        ],
+      };
+
+      // 指定した視点へ切り替える
+      function setView(name) {
+        if (scene.is("vr-mode")) return;
+        const [p, r] = views[name];
+        camera.setAttribute("position", p.join(" "));
+        const c = camera.components["look-controls"];
+        if (c) {
+          c.pitchObject.rotation.x = AFRAME.THREE.MathUtils.degToRad(r[0]);
+          c.yawObject.rotation.y = AFRAME.THREE.MathUtils.degToRad(r[1]);
+        }
+        camera.setAttribute("rotation", `${r[0]} ${r[1]} 0`);
+        const w = camera.components["wasd-controls"];
+        if (w && w.velocity) w.velocity.set(0, 0, 0);
+      }
+      scene.addEventListener("loaded", () => setView("player"));
+      document
+        .querySelectorAll("[data-view]")
+        .forEach((b) => (b.onclick = () => setView(b.dataset.view)));
+      scene.addEventListener("enter-vr", () => document.body.classList.add("vr"));
+      scene.addEventListener("exit-vr", () => document.body.classList.remove("vr"));
+      setTimeout(() => {
+        if (!scene.renderStarted) {
+          document.getElementById("status").textContent =
+            "読み込みに時間がかかっています。ネット接続とブラウザのコンソールを確認してください。";
+        }
+      }, 18000);
+      // ======================================
+// 道路オブジェクト15枚を生成
+// ======================================
+
+const roadScene = document.querySelector("a-scene");
+
+// 配置するX座標とZ座標
+const roadX = [39, 46, 53];
+const roadZ = [-14, -7, 0, 7, 14];
+
+let roadNumber = 1;
+
+roadZ.forEach((z) => {
+
+  roadX.forEach((x) => {
+
+    // 道路全体の親オブジェクト
+    const road = document.createElement("a-entity");
+
+    road.setAttribute(
+      "id",
+      `road-${String(roadNumber).padStart(2, "0")}`
+    );
+
+    road.setAttribute("position", {
+      x: x,
+      y: -0.945,
+      z: z
+    });
+
+    // 駅や橋と同じ操作コンポーネント
+    road.setAttribute("station-grab", "");
+
+    // 道路本体
+    const roadBody = document.createElement("a-box");
+
+    roadBody.setAttribute("width", "4");
+    roadBody.setAttribute("height", "0.08");
+    roadBody.setAttribute("depth", "1.15");
+    roadBody.setAttribute("color", "#555555");
+    roadBody.setAttribute("shadow", "");
+
+    road.appendChild(roadBody);
+    roadScene.appendChild(road);
+
+    roadNumber++;
+
+  });
+
+});
+// ======================================
+// 全オブジェクトを初期位置に戻すボタン
+// ======================================
+
+document.getElementById("resetAllBtn")
+  .addEventListener("click", () => {
+
+    const socket = window.multiplayerSocket;
+
+    if (!socket || !socket.connected) {
+      alert("サーバーに接続されていません");
+      return;
+    }
+
+    const ok = confirm(
+      "駅・橋・道路などをすべて初期位置に戻しますか？"
+    );
+
+    if (!ok) return;
+
+    // 全オブジェクトを初期位置に戻す
+    socket.emit("station:reset-all");
+
+    // 両PCの雲を削除
+    socket.emit("road-cloud:reset");
+
+    // 自分のPCの雲も即座に削除
+    window.clearRoadClouds?.();
+    window.clearRoadClouds?.();
+
+  });
+    </script>
+
+  <!-- PC1・PC2の通信 -->
+    <script src="/socket.io/socket.io.js"></script>
+    <script src="multiplayer.js"></script>
+    <script src="station-grab.js"></script>
+    <script src="cloud.js"></script>
+    <script src="horizon-glow.js"></script>
+
+  </body>
+</html>
